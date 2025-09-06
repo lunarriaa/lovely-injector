@@ -3,8 +3,10 @@
 use core::slice;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_void;
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 use std::time::Instant;
 use std::{env, fs};
 
@@ -13,12 +15,10 @@ use log::*;
 use crop::Rope;
 use getargs::{Arg, Options};
 use itertools::Itertools;
-use patch::{Patch, PatchFile, Priority};
+use patch::{pattern, regex, Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
-use sys::{LuaLib, LuaState, LUA};
-use std::sync::Arc;
-use std::sync::Mutex;
+use sys::LuaState;
 
 pub mod chunk_vec_cursor;
 pub mod log;
@@ -28,68 +28,50 @@ pub mod sys;
 pub const LOVELY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 type LoadBuffer =
-    dyn Fn(*mut LuaState, *const u8, usize, *const u8, *const u8) -> u32 + Send + Sync + 'static;
+    dyn Fn(*mut LuaState, *const u8, isize, *const u8, *const u8) -> u32 + Send + Sync + 'static;
 
 pub struct Lovely {
     pub mod_dir: PathBuf,
     pub is_vanilla: bool,
     loadbuffer: &'static LoadBuffer,
     patch_table: PatchTable,
+    rt_init: Once,
     dump_all: bool,
-    // Previously seen *LuaState pointers.
-    // Note: can have false negatives. A new LuaState that happens to land in the
-    // same memory location as another one won't be detected. We currently ignore this.
-    seen_states: Arc<Mutex<HashSet<usize>>>,
+}
+
+pub struct LovelyConfig {
+    pub dump_all: bool,
+    pub vanilla: bool,
+    pub mod_dir: Option<PathBuf>,
 }
 
 impl Lovely {
     /// Initialize the Lovely patch runtime.
-    pub fn init(loadbuffer: &'static LoadBuffer, lualib: LuaLib, dump_all: bool) -> Self {
-        LUA.set(lualib).unwrap_or_else(|_| panic!("LUA static var has already been set."));
-
+    pub fn init(loadbuffer: &'static LoadBuffer, config: LovelyConfig) -> Self {
         let start = Instant::now();
 
-        let args = std::env::args().skip(1).collect_vec();
-        let mut opts = Options::new(args.iter().map(String::as_str));
-
-        let mut mod_dir = if let Some(env_path) = env::var_os("LOVELY_MOD_DIR") {
-            PathBuf::from(env_path)
+        let cur_exe =
+            env::current_exe().expect("Failed to get the path of the current executable.");
+        let game_name = if env::consts::OS == "macos" {
+            cur_exe
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::parent)
+                .expect("Couldn't find parent .app of current executable path")
+                .file_name()
+                .expect("Failed to get file_name of parent directory of current executable")
+                .to_string_lossy()
+                .strip_suffix(".app")
+                .expect("Parent directory of current executable path was not an .app")
+                .replace(".", "_")
         } else {
-            let cur_exe =
-                env::current_exe().expect("Failed to get the path of the current executable.");
-            let game_name = if env::consts::OS == "macos" {
-                cur_exe
-                    .parent()
-                    .and_then(Path::parent)
-                    .and_then(Path::parent)
-                    .expect("Couldn't find parent .app of current executable path")
-                    .file_name()
-                    .expect("Failed to get file_name of parent directory of current executable")
-                    .to_string_lossy()
-                    .strip_suffix(".app")
-                    .expect("Parent directory of current executable path was not an .app")
-                    .replace(".", "_")
-            } else {
-                cur_exe
-                    .file_stem()
-                    .expect("Failed to get file_stem component of current executable path.")
-                    .to_string_lossy()
-                    .replace(".", "_")
-            };
-            dirs::config_dir().unwrap().join(game_name).join("Mods")
+            cur_exe
+                .file_stem()
+                .expect("Failed to get file_stem component of current executable path.")
+                .to_string_lossy()
+                .replace(".", "_")
         };
-
-        let mut is_vanilla = false;
-
-        while let Some(opt) = opts.next_arg().expect("Failed to parse argument.") {
-            match opt {
-                Arg::Long("mod-dir") => {
-                    mod_dir = opts.value().map(PathBuf::from).unwrap_or(mod_dir)
-                }
-                Arg::Long("vanilla") => is_vanilla = true,
-                _ => (),
-            }
-        }
+        let mod_dir = config.mod_dir.unwrap_or_else(|| dirs::config_dir().unwrap().join(game_name).join("Mods"));
 
         let log_dir = mod_dir.join("lovely").join("log");
 
@@ -98,16 +80,16 @@ impl Lovely {
         info!("Lovely {LOVELY_VERSION}");
 
         // Stop here if we're running in vanilla mode.
-        if is_vanilla {
+        if config.vanilla {
             info!("Running in vanilla mode");
 
             return Lovely {
                 mod_dir,
-                is_vanilla,
+                is_vanilla: config.vanilla,
                 loadbuffer,
                 patch_table: Default::default(),
-                dump_all,
-                seen_states: Arc::new(Mutex::new(HashSet::new())),
+                rt_init: Once::new(),
+                dump_all: config.dump_all,
             };
         }
 
@@ -149,11 +131,11 @@ impl Lovely {
 
         Lovely {
             mod_dir,
-            is_vanilla,
+            is_vanilla: config.vanilla,
             loadbuffer,
             patch_table,
-            dump_all,
-            seen_states: Arc::new(Mutex::new(HashSet::new())),
+            rt_init: Once::new(),
+            dump_all: config.dump_all,
         }
     }
 
@@ -167,43 +149,20 @@ impl Lovely {
         &self,
         state: *mut LuaState,
         buf_ptr: *const u8,
-        size: usize,
+        size: isize,
         name_ptr: *const u8,
         mode_ptr: *const u8,
     ) -> u32 {
         // Install native function overrides.
-        {
-            let states_mutex = Arc::clone(&self.seen_states);
-            let mut states = states_mutex.lock().unwrap();
-            if !states.contains(&(state as usize)) {
-                states.insert(state as usize);
-                let closure = sys::override_print;
-                sys::lua_pushcclosure(state, closure, 0);
-                sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, c"print".as_ptr());
+        self.rt_init.call_once(|| {
+            let closure = sys::override_print as *const c_void;
+            sys::lua_pushcclosure(state, closure, 0);
+            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, b"print\0".as_ptr() as _);
 
-                // Inject Lovely functions into the runtime.
-                self.patch_table.inject_metadata(state);
+            // Inject Lovely functions into the runtime.
+            self.patch_table.inject_metadata(state);
+        });
 
-                // Inject mod modules into runtime
-                let module_patches = self
-                    .patch_table
-                    .patches
-                    .iter()
-                    .filter_map(|(x, prio, path)| match x {
-                        Patch::Module(patch) => Some((patch, prio, path)),
-                        _ => None,
-                    })
-                    .filter(|(x, _, _)| !x.load_now)
-                    .sorted_by_key(|(_, &prio, _)| prio)
-                    .map(|(x, _, path)| (x, path));
-
-                let loadbuffer = self.patch_table.loadbuffer.unwrap();
-
-                for (patch, path) in module_patches {
-                    unsafe { patch.apply("", state, path, &loadbuffer) };
-                }
-            }
-        }
         let name = match CStr::from_ptr(name_ptr as _).to_str() {
             Ok(x) => x,
             Err(e) => {
@@ -219,10 +178,15 @@ impl Lovely {
             return (self.loadbuffer)(state, buf_ptr, size, name_ptr, mode_ptr);
         }
 
-        // Prepare buffer for patching
-        // Convert the buffer from [u8] to utf8 str.
-        let buf = slice::from_raw_parts(buf_ptr, size);
-        let buf_str = str::from_utf8(buf).unwrap_or_else(|e| {
+        // Prepare buffer for patching (Check and remove the last byte if it is a null terminator)
+        let last_byte = *buf_ptr.offset(size - 1);
+        let actual_size = if last_byte == 0 { size - 1 } else { size };
+
+        // Convert the buffer from cstr ptr, to byte slice, to utf8 str.
+        let buf = slice::from_raw_parts(buf_ptr, actual_size as _);
+        let buf_str = CString::new(buf)
+            .unwrap_or_else(|e| panic!("The byte buffer '{buf:?}' for target {name} contains a non-terminating null char: {e:?}"));
+        let buf_str = buf_str.to_str().unwrap_or_else(|e| {
             panic!("The byte buffer '{buf:?}' for target {name} contains invalid UTF-8: {e:?}")
         });
 
@@ -264,7 +228,33 @@ impl Lovely {
             };
         }
 
-        (self.loadbuffer)(state, patched.as_ptr(), patched.len(), name_ptr, mode_ptr)
+        let raw = CString::new(patched).unwrap();
+        let raw_size = raw.as_bytes().len();
+        let raw_ptr = raw.into_raw();
+
+        (self.loadbuffer)(state, raw_ptr as _, raw_size as _, name_ptr, mode_ptr)
+    }
+
+    pub fn parse_args(args: &[String]) -> LovelyConfig {
+        let mut config = LovelyConfig {
+            dump_all: false,
+            vanilla: false,
+            mod_dir: None,
+        };
+        
+        let mut opts = Options::new(args.iter().skip(1).map(String::as_str));
+        while let Some(opt) = opts.next_arg().expect("Failed to parse argument.") {
+            match opt {
+                Arg::Long("mod-dir") => {
+                    config.mod_dir = opts.value().map(PathBuf::from).ok()
+                }
+                Arg::Long("vanilla") => config.vanilla = true,
+                Arg::Long("--dump-all") => config.dump_all = true,
+                _ => (),
+            }
+        };
+
+        config
     }
 }
 
@@ -285,7 +275,7 @@ impl PatchTable {
     /// - MOD_DIR/lovely.toml
     /// - MOD_DIR/lovely/*.toml
     pub fn load(mod_dir: &Path) -> PatchTable {
-        fn filename_cmp(first: &Path, second: &Path) -> Ordering {
+        fn filename_cmp(first: &PathBuf, second: &PathBuf) -> Ordering {
             let first = first
                 .file_name()
                 .unwrap()
@@ -317,7 +307,7 @@ impl PatchTable {
                 }
                 !ignore_file.is_file()
             })
-            .sorted_by(|a, b| filename_cmp(a, b));
+            .sorted_by(filename_cmp);
 
         let patch_files = mod_dirs
             .flat_map(|dir| {
@@ -338,7 +328,7 @@ impl PatchTable {
                         .map(|x| x.path())
                         .filter(|x| x.is_file())
                         .filter(|x| x.extension().is_some_and(|x| x == "toml"))
-                        .sorted_by(|a, b| filename_cmp(a, b))
+                        .sorted_by(filename_cmp)
                         .collect_vec();
                     toml_files.append(&mut subfiles);
                 }
@@ -406,7 +396,7 @@ impl PatchTable {
                             .into_string()
                             .unwrap_or_default();
                         x.source = mod_dir.join(&x.source);
-                        targets.insert(x.before.clone().unwrap_or_default());
+                        targets.insert(x.before.clone());
                     }
                     Patch::Pattern(x) => {
                         targets.insert(x.target.clone());
@@ -488,7 +478,6 @@ impl PatchTable {
                 Patch::Module(patch) => Some((patch, prio, path)),
                 _ => None,
             })
-            .filter(|(x, _, _)| x.load_now)
             .sorted_by_key(|(_, &prio, _)| prio)
             .map(|(x, _, path)| (x, path));
 
@@ -521,7 +510,7 @@ impl PatchTable {
         // Apply module injection patches.
         let loadbuffer = self.loadbuffer.unwrap();
         for (patch, path) in module_patches {
-            let result = unsafe { patch.apply(target, lua_state, path, &loadbuffer) };
+            let result = unsafe { patch.apply(target, lua_state, &path, &loadbuffer) };
 
             if result {
                 patch_count += 1;
