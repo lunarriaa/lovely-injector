@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::time::Instant;
 use std::{env, fs};
+use libloading::Library;
+use std::ffi::c_char;
 
 use log::*;
 
@@ -18,7 +20,7 @@ use patch::{Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
 use sys::{LuaLib, LuaState, LUA};
-use sys::c;
+use crate::c;
 
 pub mod chunk_vec_cursor;
 pub mod log;
@@ -63,7 +65,6 @@ let lua_lib = unsafe {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
     { Library::new("liblua5.1.so").expect("Failed to load Lua library") }
 };
-
         let lua_lib = unsafe { LuaLib::from_library(&lua_lib) };
         LUA.set(lua_lib).expect("LUA already initialized");
 
@@ -203,7 +204,7 @@ let lua_lib = unsafe {
                 // There's practically 0 use-case for patching a target with a bad chunk name,
                 // so pump a warning to the console and recall.
                 warn!("The chunk name at {name_ptr:?} contains invalid UTF-8, skipping: {e}");
-                return (self.loadbuffer)(state, buf_ptr, size, name_ptr, mode_ptr);
+                return (self.loadbuffer)(state, buf_ptr, size as usize, name_ptr, mode_ptr);
             }
         };
 
