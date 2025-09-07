@@ -18,7 +18,7 @@ use itertools::Itertools;
 use patch::{Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
-use sys::{LuaLib, LuaState, LUA};
+use sys::{LuaLib, LuaState, LUA, LUA_LIB};
 
 pub mod chunk_vec_cursor;
 pub mod log;
