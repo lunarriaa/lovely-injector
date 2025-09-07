@@ -51,20 +51,21 @@ impl Lovely {
         let start = Instant::now();
 
         // Initialize Lua library first
-let lua_lib = unsafe {
-    #[cfg(target_os = "windows")]
-    { Library::new("lua51.dll").expect("Failed to load lua51.dll") }
-    #[cfg(target_os = "macos")]
-    { Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework") }
-    #[cfg(target_os = "linux")]
-    { Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2") }
-    #[cfg(target_os = "android")]
-    { Library::new("liblove.so").expect("Failed to load liblove.so") }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
-    { Library::new("liblua5.1.so").expect("Failed to load Lua library") }
+    let library = unsafe {
+        #[cfg(target_os = "windows")]
+            { Library::new("lua51.dll").expect("Failed to load lua51.dll") }
+        #[cfg(target_os = "macos")]
+            { Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework") }
+        #[cfg(target_os = "linux")]
+            { Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2") }
+        #[cfg(target_os = "android")]
+            { Library::new("liblove.so").expect("Failed to load liblove.so") }
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
+            { Library::new("liblua5.1.so").expect("Failed to load Lua library") }
 };
-        let lua_lib = unsafe { LuaLib::from_library(&lua_lib) };
+    let lua_lib = unsafe { LuaLib::from_library(&library) };
         LUA.set(lua_lib).expect("LUA already initialized");
+        LUA_LIB.set(library).expect("LUA_LIB already initialized");
 
         let cur_exe = env::current_exe().expect("Failed to get the path of the current executable.");
         let game_name = if env::consts::OS == "macos" {
