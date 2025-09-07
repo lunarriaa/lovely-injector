@@ -20,7 +20,7 @@ unsafe extern "C" fn recall_loadbufferx(
     mode: *const u8,
 ) -> u32 {
     let lua = lovely_core::sys::LUA.get().unwrap();
-    (lua.lual_loadbufferx)(state, buff, sz as usize, name, mode)
+    (lua.luaL_loadbufferx)(state, buff, sz as usize, name, mode)
 }
 
 unsafe extern "C" fn recall_loadbuffer(
@@ -30,7 +30,7 @@ unsafe extern "C" fn recall_loadbuffer(
     name: *const u8,
 ) -> u32 {
     let lua = lovely_core::sys::LUA.get().unwrap();
-    (lua.lual_loadbuffer)(state, buff, sz as usize, name)
+    (lua.luaL_loadbuffer)(state, buff, sz as usize, name)
 }
 
 #[allow(non_snake_case)]
