@@ -21,7 +21,10 @@ static RECALL: LazyLock<
         isize,
         *const u8,
         *const u8,
-    ) -> u32 = *LUA_LIB.get(b"luaL_loadbufferx").unwrap();
+    ) -> u32 = {
+        let lua = lovely_core::sys::LUA.get().unwrap();
+        lua.lual_loadbufferx
+      };
     let orig = dobby_rs::hook(
         lua_loadbufferx as *mut c_void,
         lua_loadbufferx_detour as *mut c_void,
@@ -93,7 +96,10 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         *const u8,
         isize,
         *const u8,
-    ) -> u32 = *LUA_LIB.get(b"luaL_loadbuffer").unwrap();
+    ) -> u32 = {
+        let lua = lovely_core::sys::LUA.get().unwrap();
+        lua.lual_loadbuffer // You'll need to add this function to your LuaLib
+    };
     let _ = dobby_rs::hook(
         lua_loadbuffer as *mut c_void,
         luaL_loadbuffer as *mut c_void,
