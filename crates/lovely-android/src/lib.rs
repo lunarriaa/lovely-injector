@@ -22,9 +22,9 @@ static RECALL: LazyLock<
         *const u8,
         *const u8,
     ) -> u32 = {
-        let lua = lovely_core::sys::LUA.get().unwrap();
-        lua.lual_loadbufferx
-      };
+    let lua = lovely_core::sys::LUA.get().unwrap();
+    (lua.lual_loadbufferx)(state, buff, sz as usize, name, mode)
+    };
     let orig = dobby_rs::hook(
         lua_loadbufferx as *mut c_void,
         lua_loadbufferx_detour as *mut c_void,
@@ -86,7 +86,7 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         mod_dir: Some(external_files_dir.join("mods")),
     };
     
-    let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c as isize, d, e), config);
+    let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c, d, e), config);
     RUNTIME
         .set(rt)
         .unwrap_or_else(|_| panic!("Failed to instantiate runtime."));
@@ -97,8 +97,8 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         isize,
         *const u8,
     ) -> u32 = {
-        let lua = lovely_core::sys::LUA.get().unwrap();
-        lua.lual_loadbuffer // You'll need to add this function to your LuaLib
+    let lua = lovely_core::sys::LUA.get().unwrap();
+    (lua.lual_loadbuffer)(state, buff, sz as usize, name)
     };
     let _ = dobby_rs::hook(
         lua_loadbuffer as *mut c_void,
