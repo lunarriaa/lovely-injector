@@ -9,7 +9,6 @@ use std::sync::Once;
 use std::time::Instant;
 use std::{env, fs};
 use libloading::Library;
-use std::ffi::c_char;
 
 use log::*;
 
@@ -20,7 +19,6 @@ use patch::{Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
 use sys::{LuaLib, LuaState, LUA};
-use crate::c;
 
 pub mod chunk_vec_cursor;
 pub mod log;
@@ -174,7 +172,7 @@ let lua_lib = unsafe {
         self.rt_init.call_once(|| {
             let closure = sys::override_print;
             sys::lua_pushcclosure(state, closure, 0);
-            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, c!("print"));
+            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, sys::c!("print"));
             // Inject Lovely functions into the runtime.
             self.patch_table.inject_metadata(state);
 
