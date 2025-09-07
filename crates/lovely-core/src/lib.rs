@@ -16,7 +16,7 @@ use crop::Rope;
 use getargs::{Arg, Options};
 use itertools::Itertools;
 use libloading::Library;
-use patch::{pattern, regex, Patch, PatchFile, Priority};
+use patch::{Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
 use sys::{LuaLib, LuaState, LUA};
@@ -29,7 +29,7 @@ pub mod sys;
 pub const LOVELY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 type LoadBuffer =
-    dyn Fn(*mut LuaState, *const u8, isize, *const u8, *const u8) -> u32 + Send + Sync + 'static;
+    dyn Fn(*mut LuaState, *const u8, usize, *const u8, *const u8) -> u32 + Send + Sync + 'static;
 
 pub struct Lovely {
     pub mod_dir: PathBuf,
@@ -53,21 +53,17 @@ impl Lovely {
 
         // Initialize Lua library first
         let lua_lib = unsafe {
-            #[cfg(target_os = "windows")]
-            Library::new("lua51.dll").expect("Failed to load lua51.dll");
-            
-            #[cfg(target_os = "macos")]
-            Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework");
-            
-            #[cfg(target_os = "linux")]
-            Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2");
-            
-            #[cfg(target_os = "android")]
-            Library::new("liblove.so").expect("Failed to load liblove.so");
-            
-            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
-            Library::new("liblua5.1.so").expect("Failed to load Lua library");
-        };
+    #[cfg(target_os = "windows")]
+    Library::new("lua51.dll").expect("Failed to load lua51.dll"),
+    #[cfg(target_os = "macos")]
+    Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework"),
+    #[cfg(target_os = "linux")]
+    Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2"),
+    #[cfg(target_os = "android")]
+    Library::new("liblove.so").expect("Failed to load liblove.so"),
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
+    Library::new("liblua5.1.so").expect("Failed to load Lua library"),
+};
 
         let lua_lib = unsafe { LuaLib::from_library(&lua_lib) };
         LUA.set(lua_lib).expect("LUA already initialized");
@@ -176,7 +172,7 @@ impl Lovely {
     ) -> u32 {
         // Install native function overrides.
         self.rt_init.call_once(|| {
-            let closure = sys::override_print as *const c_void;
+            let closure = sys::override_print;
             sys::lua_pushcclosure(state, closure, 0);
             sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, sys::c!("print"));
 
