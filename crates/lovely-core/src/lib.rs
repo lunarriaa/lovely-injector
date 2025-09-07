@@ -172,7 +172,7 @@ let lua_lib = unsafe {
         self.rt_init.call_once(|| {
             let closure = sys::override_print;
             sys::lua_pushcclosure(state, closure, 0);
-            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, sys::c!("print"));
+            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, crate::c!("print"));
             // Inject Lovely functions into the runtime.
             self.patch_table.inject_metadata(state);
 
