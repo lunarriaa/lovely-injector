@@ -12,48 +12,25 @@ use lovely_core::Lovely;
 
 static RUNTIME: OnceLock<Lovely> = OnceLock::new();
 
-static RECALL: LazyLock<
-    unsafe extern "C" fn(*mut LuaState, *const u8, isize, *const u8, *const u8) -> u32,
-> = LazyLock::new(|| unsafe {
-    let lua_loadbufferx: unsafe extern "C" fn(
-        *mut LuaState,
-        *const u8,
-        isize,
-        *const u8,
-        *const u8,
-    ) -> u32 = {
+unsafe extern "C" fn recall_loadbufferx(
+    state: *mut LuaState,
+    buff: *const u8,
+    sz: isize,
+    name: *const u8,
+    mode: *const u8,
+) -> u32 {
     let lua = lovely_core::sys::LUA.get().unwrap();
     (lua.lual_loadbufferx)(state, buff, sz as usize, name, mode)
-    };
-    let orig = dobby_rs::hook(
-        lua_loadbufferx as *mut c_void,
-        lua_loadbufferx_detour as *mut c_void,
-    )
-    .unwrap();
-    mem::transmute(orig)
-});
-
-unsafe extern "C" fn lua_loadbufferx_detour(
-    state: *mut LuaState,
-    buf_ptr: *const u8,
-    size: isize,
-    name_ptr: *const u8,
-    mode_ptr: *const u8,
-) -> u32 {
-    let rt = RUNTIME.get().unwrap_unchecked();
-    rt.apply_buffer_patches(state, buf_ptr, size, name_ptr, mode_ptr)
 }
 
-#[no_mangle]
-#[allow(non_snake_case)]
-unsafe extern "C" fn luaL_loadbuffer(
+unsafe extern "C" fn recall_loadbuffer(
     state: *mut LuaState,
-    buf_ptr: *const u8,
-    size: isize,
-    name_ptr: *const u8,
+    buff: *const u8,
+    sz: isize,
+    name: *const u8,
 ) -> u32 {
-    let rt = RUNTIME.get().unwrap_unchecked();
-    rt.apply_buffer_patches(state, buf_ptr, size, name_ptr, std::ptr::null())
+    let lua = lovely_core::sys::LUA.get().unwrap();
+    (lua.lual_loadbuffer)(state, buff, sz as usize, name)
 }
 
 #[allow(non_snake_case)]
@@ -86,7 +63,7 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         mod_dir: Some(external_files_dir.join("mods")),
     };
     
-    let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c, d, e), config);
+    let rt = Lovely::init(&|a, b, c, d, e| recall_loadbufferx(a, b, c as isize, d, e), config);
     RUNTIME
         .set(rt)
         .unwrap_or_else(|_| panic!("Failed to instantiate runtime."));
