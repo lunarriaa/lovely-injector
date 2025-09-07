@@ -4,7 +4,6 @@ use core::slice;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
-use std::os::raw::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::time::Instant;
@@ -15,11 +14,11 @@ use log::*;
 use crop::Rope;
 use getargs::{Arg, Options};
 use itertools::Itertools;
-use libloading::Library;
 use patch::{Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
 use sys::{LuaLib, LuaState, LUA};
+use sys::c;
 
 pub mod chunk_vec_cursor;
 pub mod log;
@@ -52,17 +51,17 @@ impl Lovely {
         let start = Instant::now();
 
         // Initialize Lua library first
-        let lua_lib = unsafe {
+let lua_lib = unsafe {
     #[cfg(target_os = "windows")]
-    Library::new("lua51.dll").expect("Failed to load lua51.dll"),
+    { Library::new("lua51.dll").expect("Failed to load lua51.dll") }
     #[cfg(target_os = "macos")]
-    Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework"),
+    { Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework") }
     #[cfg(target_os = "linux")]
-    Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2"),
+    { Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2") }
     #[cfg(target_os = "android")]
-    Library::new("liblove.so").expect("Failed to load liblove.so"),
+    { Library::new("liblove.so").expect("Failed to load liblove.so") }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
-    Library::new("liblua5.1.so").expect("Failed to load Lua library"),
+    { Library::new("liblua5.1.so").expect("Failed to load Lua library") }
 };
 
         let lua_lib = unsafe { LuaLib::from_library(&lua_lib) };
@@ -174,8 +173,7 @@ impl Lovely {
         self.rt_init.call_once(|| {
             let closure = sys::override_print;
             sys::lua_pushcclosure(state, closure, 0);
-            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, sys::c!("print"));
-
+            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, c!("print"));
             // Inject Lovely functions into the runtime.
             self.patch_table.inject_metadata(state);
 
@@ -211,7 +209,7 @@ impl Lovely {
 
         // Stop here if no valid patch exists for this target.
         if !self.patch_table.needs_patching(name) && !self.dump_all {
-            return (self.loadbuffer)(state, buf_ptr, size, name_ptr, mode_ptr);
+         return (self.loadbuffer)(state, buf_ptr, size as usize, name_ptr, mode_ptr);
         }
 
         // Prepare buffer for patching (Check and remove the last byte if it is a null terminator)
@@ -268,7 +266,7 @@ impl Lovely {
         let raw_size = raw.as_bytes().len();
         let raw_ptr = raw.into_raw();
 
-        (self.loadbuffer)(state, raw_ptr as _, raw_size as _, name_ptr, mode_ptr)
+        (self.loadbuffer)(state, raw_ptr as _, raw_size, name_ptr, mode_ptr)
     }
 
     pub fn parse_args(args: &[String]) -> LovelyConfig {
