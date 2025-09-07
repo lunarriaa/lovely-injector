@@ -15,10 +15,11 @@ use log::*;
 use crop::Rope;
 use getargs::{Arg, Options};
 use itertools::Itertools;
+use libloading::Library;
 use patch::{pattern, regex, Patch, PatchFile, Priority};
 use regex_lite::Regex;
 use sha2::{Digest, Sha256};
-use sys::LuaState;
+use sys::{LuaLib, LuaState, LUA};
 
 pub mod chunk_vec_cursor;
 pub mod log;
@@ -50,8 +51,28 @@ impl Lovely {
     pub fn init(loadbuffer: &'static LoadBuffer, config: LovelyConfig) -> Self {
         let start = Instant::now();
 
-        let cur_exe =
-            env::current_exe().expect("Failed to get the path of the current executable.");
+        // Initialize Lua library first
+        let lua_lib = unsafe {
+            #[cfg(target_os = "windows")]
+            Library::new("lua51.dll").expect("Failed to load lua51.dll");
+            
+            #[cfg(target_os = "macos")]
+            Library::new("../Frameworks/Lua.framework/Versions/A/Lua").expect("Failed to load Lua framework");
+            
+            #[cfg(target_os = "linux")]
+            Library::new("libluajit-5.1.so.2").expect("Failed to load libluajit-5.1.so.2");
+            
+            #[cfg(target_os = "android")]
+            Library::new("liblove.so").expect("Failed to load liblove.so");
+            
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
+            Library::new("liblua5.1.so").expect("Failed to load Lua library");
+        };
+
+        let lua_lib = unsafe { LuaLib::from_library(&lua_lib) };
+        LUA.set(lua_lib).expect("LUA already initialized");
+
+        let cur_exe = env::current_exe().expect("Failed to get the path of the current executable.");
         let game_name = if env::consts::OS == "macos" {
             cur_exe
                 .parent()
@@ -157,10 +178,29 @@ impl Lovely {
         self.rt_init.call_once(|| {
             let closure = sys::override_print as *const c_void;
             sys::lua_pushcclosure(state, closure, 0);
-            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, b"print\0".as_ptr() as _);
+            sys::lua_setfield(state, sys::LUA_GLOBALSINDEX, sys::c!("print"));
 
             // Inject Lovely functions into the runtime.
             self.patch_table.inject_metadata(state);
+
+            // Inject mod modules into runtime
+            let module_patches = self
+                .patch_table
+                .patches
+                .iter()
+                .filter_map(|(x, prio, path)| match x {
+                    Patch::Module(patch) => Some((patch, prio, path)),
+                    _ => None,
+                })
+                .filter(|(x, _, _)| !x.load_now)
+                .sorted_by_key(|(_, &prio, _)| prio)
+                .map(|(x, _, path)| (x, path));
+
+            let loadbuffer = self.patch_table.loadbuffer.unwrap();
+
+            for (patch, path) in module_patches {
+                unsafe { patch.apply("", state, path, &loadbuffer) };
+            }
         });
 
         let name = match CStr::from_ptr(name_ptr as _).to_str() {
@@ -241,7 +281,7 @@ impl Lovely {
             vanilla: false,
             mod_dir: None,
         };
-        
+
         let mut opts = Options::new(args.iter().skip(1).map(String::as_str));
         while let Some(opt) = opts.next_arg().expect("Failed to parse argument.") {
             match opt {
@@ -249,7 +289,7 @@ impl Lovely {
                     config.mod_dir = opts.value().map(PathBuf::from).ok()
                 }
                 Arg::Long("vanilla") => config.vanilla = true,
-                Arg::Long("--dump-all") => config.dump_all = true,
+                Arg::Long("dump-all") => config.dump_all = true,
                 _ => (),
             }
         };
@@ -275,7 +315,7 @@ impl PatchTable {
     /// - MOD_DIR/lovely.toml
     /// - MOD_DIR/lovely/*.toml
     pub fn load(mod_dir: &Path) -> PatchTable {
-        fn filename_cmp(first: &PathBuf, second: &PathBuf) -> Ordering {
+        fn filename_cmp(first: &Path, second: &Path) -> Ordering {
             let first = first
                 .file_name()
                 .unwrap()
@@ -307,7 +347,7 @@ impl PatchTable {
                 }
                 !ignore_file.is_file()
             })
-            .sorted_by(filename_cmp);
+            .sorted_by(|a, b| filename_cmp(a, b));
 
         let patch_files = mod_dirs
             .flat_map(|dir| {
@@ -328,7 +368,7 @@ impl PatchTable {
                         .map(|x| x.path())
                         .filter(|x| x.is_file())
                         .filter(|x| x.extension().is_some_and(|x| x == "toml"))
-                        .sorted_by(filename_cmp)
+                        .sorted_by(|a, b| filename_cmp(a, b))
                         .collect_vec();
                     toml_files.append(&mut subfiles);
                 }
@@ -396,7 +436,7 @@ impl PatchTable {
                             .into_string()
                             .unwrap_or_default();
                         x.source = mod_dir.join(&x.source);
-                        targets.insert(x.before.clone());
+                        targets.insert(x.before.clone().unwrap_or_default());
                     }
                     Patch::Pattern(x) => {
                         targets.insert(x.target.clone());
@@ -478,6 +518,7 @@ impl PatchTable {
                 Patch::Module(patch) => Some((patch, prio, path)),
                 _ => None,
             })
+            .filter(|(x, _, _)| x.load_now)
             .sorted_by_key(|(_, &prio, _)| prio)
             .map(|(x, _, path)| (x, path));
 
@@ -510,7 +551,7 @@ impl PatchTable {
         // Apply module injection patches.
         let loadbuffer = self.loadbuffer.unwrap();
         for (patch, path) in module_patches {
-            let result = unsafe { patch.apply(target, lua_state, &path, &loadbuffer) };
+            let result = unsafe { patch.apply(target, lua_state, path, &loadbuffer) };
 
             if result {
                 patch_count += 1;
@@ -542,8 +583,6 @@ impl PatchTable {
         };
 
         // Apply variable interpolation.
-        // TODO I don't think it's necessary to split into lines
-        // and convert the rope to Strings? seems overcomplicated
         for line in patched_lines.iter_mut() {
             patch::vars::apply_var_interp(line, &self.vars);
         }
