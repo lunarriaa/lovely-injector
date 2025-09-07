@@ -1,5 +1,5 @@
 use lovely_core::{log::*, LovelyConfig};
-use lovely_core::sys::{LuaState, LUA_LIB};
+use lovely_core::sys::LuaState;
 use std::path::PathBuf;
 use std::{ffi::c_void, mem, panic, sync::{LazyLock, OnceLock}};
 
@@ -83,7 +83,7 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         mod_dir: Some(external_files_dir.join("mods")),
     };
     
-    let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c, d, e), config);
+    let rt = Lovely::init(&|a, b, c, d, e| RECALL(a, b, c as isize, d, e), config);
     RUNTIME
         .set(rt)
         .unwrap_or_else(|_| panic!("Failed to instantiate runtime."));
