@@ -1,20 +1,20 @@
+use std::ffi::{c_char, c_int, c_void, CString};
 use std::ptr;
 use std::sync::OnceLock;
-use std::slice;
-use std::ffi::{c_char, c_int, c_void, CString};
 use std::collections::VecDeque;
+use std::slice;
 
 use itertools::Itertools;
 use libloading::Library;
 use log::info;
-
-pub static LUA: OnceLock<LuaLib> = OnceLock::new();
 
 pub type LuaState = c_void;
 
 pub const LUA_GLOBALSINDEX: c_int = -10002;
 pub const LUA_TNIL: c_int = 0;
 pub const LUA_TBOOLEAN: c_int = 1;
+
+pub static LUA: OnceLock<LuaLib> = OnceLock::new();
 
 macro_rules! c {
     ($s:expr) => {
@@ -54,7 +54,6 @@ generate! (LuaLib {
     pub unsafe extern "C" fn lua_pushvalue(state: *mut LuaState, index: c_int);
     pub unsafe extern "C" fn lua_pushcclosure(state: *mut LuaState, f: unsafe extern "C" fn(*mut LuaState) -> c_int, n: c_int);
     pub unsafe extern "C" fn lua_tolstring(state: *mut LuaState, index: c_int, len: *mut usize) -> *const c_char;
-    // Add the missing functions from the original code
     pub unsafe extern "C" fn lua_toboolean(state: *mut LuaState, index: c_int) -> c_int;
     pub unsafe extern "C" fn lua_topointer(state: *mut LuaState, index: c_int) -> *const c_void;
     pub unsafe extern "C" fn lua_type(state: *mut LuaState, index: c_int) -> c_int;
@@ -86,35 +85,10 @@ impl LuaLib {
     }
 }
 
-/// Initialize the Lua library based on the target OS
-pub fn init_lua_library() -> Result<(), Box<dyn std::error::Error>> {
-    let library = unsafe {
-        #[cfg(target_os = "windows")]
-        Library::new("lua51.dll")?;
-        
-        #[cfg(target_os = "macos")]
-        Library::new("../Frameworks/Lua.framework/Versions/A/Lua")?;
-        
-        #[cfg(target_os = "linux")]
-        Library::new("libluajit-5.1.so.2")?;
-        
-        #[cfg(target_os = "android")]
-        Library::new("liblove.so")?;
-        
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "android")))]
-        Library::new("liblua5.1.so")?;
-    };
-    
-    let lua_lib = unsafe { LuaLib::from_library(&library) };
-    LUA.set(lua_lib).map_err(|_| "LUA already initialized")?;
-    
-    Ok(())
-}
-
 /// Load the provided buffer as a lua module with the specified name.
 /// # Safety
 /// Makes a lot of FFI calls, mutates internal C lua state.
-pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, usize, *const u8, *const u8) -> u32>(
+pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, isize, *const u8, *const u8) -> u32>(
     state: *mut LuaState,
     name: &str,
     buffer: &str,
@@ -137,9 +111,9 @@ pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, usize, *const u8, *con
     // Load the buffer and execute it via lua_pcall, pushing the result to the top of the stack.
     lual_loadbufferx(
         state,
-        buf_cstr.as_ptr() as *const u8,
-        buf_len,
-        p_name_cstr.as_ptr() as *const u8,
+        buf_cstr.as_ptr() as _,
+        buf_len as _,
+        p_name_cstr.as_ptr() as _,
         ptr::null(),
     );
 
