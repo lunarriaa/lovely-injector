@@ -19,7 +19,7 @@ pub static LUA: OnceLock<LuaLib> = OnceLock::new();
 #[macro_export]
 macro_rules! c {
     ($s:expr) => {
-        concat!($s, "\0").as_ptr() as *const c_char
+        concat!($s, "\0").as_ptr() as *const std::ffi::c_char
     };
 }
 
