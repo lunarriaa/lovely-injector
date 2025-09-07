@@ -16,6 +16,7 @@ pub const LUA_TBOOLEAN: c_int = 1;
 
 pub static LUA: OnceLock<LuaLib> = OnceLock::new();
 
+#[macro_export]
 macro_rules! c {
     ($s:expr) => {
         concat!($s, "\0").as_ptr() as *const c_char
@@ -28,6 +29,7 @@ macro_rules! generate {
             $vis:vis unsafe extern "C" fn $method:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?;
         )*
     }) => {
+        #[derive(Debug)]
         pub struct $libname {
             $(
                 $vis $method: unsafe extern "C" fn($($arg: $ty),*) $(-> $ret)?,
@@ -88,7 +90,7 @@ impl LuaLib {
 /// Load the provided buffer as a lua module with the specified name.
 /// # Safety
 /// Makes a lot of FFI calls, mutates internal C lua state.
-pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, isize, *const u8, *const u8) -> u32>(
+pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, usize, *const u8, *const u8) -> u32>(
     state: *mut LuaState,
     name: &str,
     buffer: &str,
@@ -112,7 +114,7 @@ pub unsafe fn load_module<F: Fn(*mut LuaState, *const u8, isize, *const u8, *con
     lual_loadbufferx(
         state,
         buf_cstr.as_ptr() as _,
-        buf_len as _,
+        buf_len,
         p_name_cstr.as_ptr() as _,
         ptr::null(),
     );
