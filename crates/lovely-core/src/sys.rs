@@ -61,8 +61,8 @@ generate! (LuaLib {
     pub unsafe extern "C" fn lua_type(state: *mut LuaState, index: c_int) -> c_int;
     pub unsafe extern "C" fn lua_typename(state: *mut LuaState, tp: c_int) -> *const c_char;
     pub unsafe extern "C" fn lua_isstring(state: *mut LuaState, index: c_int) -> c_int;
-    pub unsafe extern "C" fn lual_loadbufferx(state: *mut LuaState, buff: *const u8, sz: usize, name: *const u8, mode: *const u8) -> u32;
-    pub unsafe extern "C" fn lual_loadbuffer(state: *mut LuaState, buff: *const u8, sz: usize, name: *const u8) -> u32;
+    pub unsafe extern "C" fn luaL_loadbufferx(state: *mut LuaState, buff: *const u8, sz: usize, name: *const u8, mode: *const u8) -> u32;
+    pub unsafe extern "C" fn luaL_loadbuffer(state: *mut LuaState, buff: *const u8, sz: usize, name: *const u8) -> u32;
 });
 
 impl LuaLib {
@@ -85,8 +85,8 @@ impl LuaLib {
             lua_type: *library.get(b"lua_type\0").unwrap(),
             lua_typename: *library.get(b"lua_typename\0").unwrap(),
             lua_isstring: *library.get(b"lua_isstring\0").unwrap(),
-            lual_loadbufferx: *library.get(b"luaL_loadbufferx\0").unwrap(),
-            lual_loadbuffer: *library.get(b"luaL_loadbuffer\0").unwrap(),
+            luaL_loadbufferx: *library.get(b"luaL_loadbufferx\0").unwrap(),
+            luaL_loadbuffer: *library.get(b"luaL_loadbuffer\0").unwrap(),
         }
     }
 }
