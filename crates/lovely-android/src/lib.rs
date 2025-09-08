@@ -1,8 +1,7 @@
 use lovely_core::{log::*, LovelyConfig};
-use lovely_core::sys::LuaState;
+use lovely_core::sys::{LuaState, LUA};
 use std::path::PathBuf;
-use std::{ffi::c_void, mem, panic, sync::{LazyLock, OnceLock}};
-
+use std::{ffi::c_void, panic, sync::OnceLock};
 
 use jni::{JNIEnv, JNIVersion, JavaVM};
 use jni::objects::JString;
@@ -19,8 +18,8 @@ unsafe extern "C" fn recall_loadbufferx(
     name: *const u8,
     mode: *const u8,
 ) -> u32 {
-    let lua = lovely_core::sys::LUA.get().unwrap();
-    lua.lua_l_loadbufferx(state, buff, sz as usize, name, mode)
+    let lua = LUA.get().unwrap();
+    (lua.lua_l_loadbufferx)(state, buff, sz as usize, name, mode)
 }
 
 unsafe extern "C" fn recall_loadbuffer(
@@ -29,7 +28,7 @@ unsafe extern "C" fn recall_loadbuffer(
     sz: isize,
     name: *const u8,
 ) -> u32 {
-    let lua = lovely_core::sys::LUA.get().unwrap();
+    let lua = LUA.get().unwrap();
     (lua.lua_l_loadbuffer)(state, buff, sz as usize, name)
 }
 
@@ -73,13 +72,11 @@ unsafe extern "C" fn JNI_OnLoad(jvm: JavaVM, _: *mut c_void) -> jint {
         *const u8,
         isize,
         *const u8,
-    ) -> u32 = {
-    let lua = lovely_core::sys::LUA.get().unwrap();
-    (lua.lual_loadbuffer)(state, buff, sz as usize, name)
-    };
+    ) -> u32 = recall_loadbuffer;
+
     let _ = dobby_rs::hook(
         lua_loadbuffer as *mut c_void,
-        luaL_loadbuffer as *mut c_void,
+        recall_loadbuffer as *mut c_void,
     )
     .unwrap();
 
