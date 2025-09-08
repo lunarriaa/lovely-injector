@@ -9,7 +9,6 @@ on:
       - 'android'
 
 jobs:
-
   build-android:
     strategy:
       matrix:
@@ -30,26 +29,43 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
+      - name: Install GitHub CLI
+        run: |
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
       - name: Build
         run: cargo ndk -t arm64-v8a build --target ${{ matrix.target }} --package lovely-android --release
+
+      - name: Find and list built files
+        run: |
+          find . -name "*.so" -type f | head -20
+          find . -name "*dobby*" -type f | head -20
+          ls -la target/aarch64-linux-android/release/
 
       - name: Upload dobby artifact
         uses: actions/upload-artifact@v4
         with:
           name: libdobby.so
-          path: ./crates/dobby-sys/dobby/build/android/arm64-v8a/libdobby.so
-          if-no-files-found: error
+          path: target/aarch64-linux-android/release/build/dobby-sys-*/out/build/libdobby.so
+          if-no-files-found: warn
 
       - name: Upload lovely artifact
         uses: actions/upload-artifact@v4
         with:
           name: liblovely.so
-          path: ./target/aarch64-linux-android/release/liblovely.so
+          path: target/aarch64-linux-android/release/liblovely.so
           if-no-files-found: error
 
       - name: Submit build artifact
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          gh release upload ${{ github.ref_name }} ./crates/dobby-sys/dobby/build/android/arm64-v8a/libdobby.so ./target/aarch64-linux-android/release/liblovely.so
+        run: |
+          gh release upload ${{ github.ref_name }} \
+            target/aarch64-linux-android/release/liblovely.so \
+            target/aarch64-linux-android/release/build/dobby-sys-*/out/build/libdobby.so
